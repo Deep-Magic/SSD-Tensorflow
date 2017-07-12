@@ -5,7 +5,7 @@ deployment/__pycache__/
 nets/__pycache__/
 preprocessing/__pycache__/
 
-.ipynb_checkpoints/
+
 
 
 checkpoints/ssd_300_vgg.ckpt.data-00000-of-00001
