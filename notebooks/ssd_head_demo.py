@@ -2,6 +2,7 @@
 # coding: utf-8
 
 # In[2]:
+import time
 import numpy as np
 import tensorflow as tf
 import cv2
@@ -109,6 +110,19 @@ def process_image(img, select_threshold=0.5, nms_threshold=.45, net_shape=(300, 
 
 cap = cv2.VideoCapture(0)
 
+def convert_to_rvec(x, y, z):
+	x = np.deg2rad(x)
+	y = np.deg2rad(x)
+	z = np.deg2rad(x)
+
+	x = np.array([[1, 0, 0], [0, np.cos(x), -np.sin(x)], [0, np.sin(x), np.cos(x)]])
+	y = np.array([[np.cos(y), 0, np.sin(y)], [0, 1, 0], [-np.sin(y), 0, np.cos(y)]])
+	z = np.array([[np.cos(z), -np.sin(z), 0], [np.sin(z), np.cos(z), 0], [0, 0, 1]])
+
+	rvec = np.matmul(np.matmul(z, y), x)
+
+	return rvec
+
 
 def visualize_box(img, rclasses, rscores, rbboxes):
 	cropped_head = []
@@ -117,11 +131,39 @@ def visualize_box(img, rclasses, rscores, rbboxes):
 		botright = (int(box[3]*img.shape[1]), int(box[2]*img.shape[0]))
 		area = (botright[0]-topleft[0])*(botright[1]-topleft[1])
 		if area > min_area:
-			cropped_head.append(img[topleft[1]:botright[1], topleft[0]:botright[0]])
-			img = cv2.rectangle(img, topleft, botright, (0, 255, 0), 2)
-			# print(rscores[ind])
-			img = cv2.putText(img,str(rscores[ind]),topleft, cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),2,cv2.LINE_AA)
-	return img, cropped_head
+			# cropped_head.append(img[topleft[1]:botright[1], topleft[0]:botright[0]])
+			resized_head = cv2.resize(img[topleft[1]:botright[1], topleft[0]:botright[0]], (64, 64))
+
+			cv2.rectangle(img, topleft, botright, (0, 255, 0), 2)
+
+			pitch = my_head_pose_estimator.return_pitch(resized_head)  # Evaluate the pitch angle using a CNN
+			yaw = my_head_pose_estimator.return_yaw(resized_head)  # Evaluate the yaw angle using a CNN
+			roll = my_head_pose_estimator.return_roll(resized_head)
+
+			display_pitch = "pitch: " + str(pitch[0, 0, 0])
+			display_yaw = "yaw: " + str(yaw[0, 0, 0])
+			display_roll = "roll: " + str(roll[0, 0, 0])
+
+			axis = np.float32([[50, 0, 0], [0, 50, 0], [0, 0, 50]])
+
+			rvec = convert_to_rvec(yaw[0, 0, 0], pitch[0, 0, 0], roll[0, 0, 0])
+			camera_distortion = np.float32([0.0, 0.0, 0.0, 0.0, 0.0])
+			camera_matrix = np.float32([[602.10618226, 0.0, 320.27333589],
+											[0.0, 603.55869786, 229.7537026],
+											[0.0, 0.0, 1.0]])
+			tvec = np.float32([0,0,0])
+			imgpts, jac = cv2.projectPoints(axis, rvec, tvec, camera_matrix, camera_distortion)
+			print(imgpts)
+			print(imgpts.shape)
+			time.sleep(10)
+
+			cv2.line(img, topleft, tuple(imgpts[1].ravel()), (0, 255, 0), 3)
+
+			cv2.putText(img, display_pitch, (topleft[0], botright[1]-60), cv2.FONT_HERSHEY_SIMPLEX, .6, (255, 255, 10), 1, cv2.LINE_AA)
+			cv2.putText(img, display_yaw, (topleft[0], botright[1]-40), cv2.FONT_HERSHEY_SIMPLEX, .6, (255, 20, 255), 1, cv2.LINE_AA)
+			cv2.putText(img, display_roll, (topleft[0], botright[1]-20), cv2.FONT_HERSHEY_SIMPLEX, .6, (30, 255, 255), 1, cv2.LINE_AA)
+			cv2.putText(img, str(rscores[ind]),topleft, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2, cv2.LINE_AA)
+	return img
 
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
 out = cv2.VideoWriter('head_demo.avi', fourcc, 20.0, (640, 480))
@@ -131,11 +173,11 @@ my_head_pose_estimator = CnnHeadPoseEstimator(sess)  # Head pose estimation obje
 # dir_path = os.path.dirname(os.path.realpath(__file__))
 pitchfile_path = "/home/walter/Documents/others_git/deepgaze/etc/tensorflow/head_pose/pitch/cnn_cccdd_30k.tf"
 yawfile_path = "/home/walter/Documents/others_git/deepgaze/etc/tensorflow/head_pose/yaw/cnn_cccdd_30k"
+rollfile_path = "/home/walter/Documents/others_git/deepgaze/etc/tensorflow/head_pose/roll/cnn_cccdd_30k.tf"
 
 my_head_pose_estimator.load_pitch_variables(pitchfile_path)
 my_head_pose_estimator.load_yaw_variables(yawfile_path)
-image = cv2.imread("/home/walter/Documents/others_git/deepgaze/examples/ex_cnn_headp_pose_estimation_images/7.jpg")  # Read the image with OpenCV
-
+my_head_pose_estimator.load_roll_variables(rollfile_path)
 
 
 while True:
@@ -147,18 +189,11 @@ while True:
 	# img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 	rclasses, rscores, rbboxes = process_image(img, select_threshold=min_select, nms_threshold=min_conf)
-	img, cropped_head_list = visualize_box(img, rclasses, rscores, rbboxes)
+	img = visualize_box(img, rclasses, rscores, rbboxes)
 	# out.write(img)
 
-	# cv2.imshow('demo', img)
-	if cropped_head_list:
-		cropped_head = cropped_head_list[0]
-		resized_head = cv2.resize(cropped_head, (200, 200))
-		cv2.imshow('demo,', resized_head)
-		pitch = my_head_pose_estimator.return_pitch(resized_head)  # Evaluate the pitch angle using a CNN
-		yaw = my_head_pose_estimator.return_yaw(resized_head)  # Evaluate the yaw angle using a CNN
-		print("Estimated pitch ..... " + str(pitch[0, 0, 0]))
-		print("Estimated yaw ..... " + str(yaw[0, 0, 0]))
+	cv2.imshow('demo', img)
+
 	if cv2.waitKey(25) & 0xFF == ord('q'):
 		cv2.destroyAllWindows()
 		break
