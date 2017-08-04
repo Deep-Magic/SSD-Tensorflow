@@ -1,19 +1,15 @@
-
-# coding: utf-8
-
-# In[2]:
-import time
 import numpy as np
 import tensorflow as tf
 import cv2
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
+
 import argparse
 import sys
 import os
 import math
 import random
 from deepgaze.head_pose_estimation import CnnHeadPoseEstimator
+import freenect
+from freenect import sync_get_depth as get_depth, sync_get_video as get_video
 
 sys.path.append('../')
 from nets import ssd_vgg_512, ssd_common, np_methods
@@ -26,7 +22,7 @@ slim = tf.contrib.slim
 
 parser = argparse.ArgumentParser(description = 'Get min Confident lvl to display.')
 parser.add_argument('--c', type = float, help='minconfidence needed to display box', default=.2)
-parser.add_argument('--s', type = float, help='min select threshold needed to display box', default=.92)
+parser.add_argument('--s', type = float, help='min select threshold needed to display box', default=.96)
 parser.add_argument('--a', type = int, help='minmum_area', default=3000)
 args = parser.parse_args()
 min_conf = args.c
@@ -46,9 +42,9 @@ isess = tf.InteractiveSession(config=config)
 
 
 # ## SSD 300 Model
-# 
+#
 # The SSD 300 network takes 300x300 image inputs. In order to feed any image, the latter is resize to this input shape (i.e.`Resize.WARP_RESIZE`). Note that even though it may change the ratio width / height, the SSD model performs well on resized images (and it is the default behaviour in the original Caffe implementation).
-# 
+#
 # SSD anchors correspond to the default bounding boxes encoded in the network. The SSD net output provides offset on the coordinates and dimensions of these anchors.
 
 # In[7]:
@@ -81,9 +77,9 @@ ssd_anchors = ssd_net.anchors(net_shape)
 
 
 # ## Post-processing pipeline
-# 
+#
 # The SSD outputs need to be post-processed to provide proper detections. Namely, we follow these common steps:
-# 
+#
 # * Select boxes above a classification threshold;
 # * Clip boxes to the image shape;
 # * Apply the Non-Maximum-Selection algorithm: fuse together boxes whose Jaccard score > threshold;
@@ -108,7 +104,7 @@ def process_image(img, select_threshold=0.5, nms_threshold=.45, net_shape=(300, 
 	rbboxes = np_methods.bboxes_resize(rbbox_img, rbboxes)
 	return rclasses, rscores, rbboxes
 
-cap = cv2.VideoCapture(0)
+
 
 def convert_to_rvec(x, y, z):
 	x = np.deg2rad(x)
@@ -124,15 +120,16 @@ def convert_to_rvec(x, y, z):
 	return rvec
 
 
-def visualize_box(img, rclasses, rscores, rbboxes):
+def visualize_box(img, rclasses, rscores, rbboxes, d3):
 	cropped_head = []
 	for ind, box in enumerate(rbboxes):
-		topleft = (int(box[1]*img.shape[1]), int(box[0]*img.shape[0]))
+		topleft = ( int(box[1]*img.shape[1]), int(box[0]*img.shape[0]))
 		botright = (int(box[3]*img.shape[1]), int(box[2]*img.shape[0]))
 		area = (botright[0]-topleft[0])*(botright[1]-topleft[1])
 		if area > min_area:
 			# cropped_head.append(img[topleft[1]:botright[1], topleft[0]:botright[0]])
 			resized_head = cv2.resize(img[topleft[1]:botright[1], topleft[0]:botright[0]], (64, 64))
+			center = (int((botright[0] + topleft[0]) / 2), int((botright[1] + topleft[1]) / 2))
 
 			cv2.rectangle(img, topleft, botright, (0, 255, 0), 2)
 
@@ -143,23 +140,9 @@ def visualize_box(img, rclasses, rscores, rbboxes):
 			display_pitch = "pitch: " + str(pitch[0, 0, 0])
 			display_yaw = "yaw: " + str(yaw[0, 0, 0])
 			display_roll = "roll: " + str(roll[0, 0, 0])
+			display_depth = "depth: " + str(d3[center[1]][center[0]][0])
 
-			center = (int((botright[0]+topleft[0])/2), int((botright[1]+topleft[1])/2))
-
-			x_axis = np.float32([50, 0, 0])
-			y_axis = np.float32([0, -50, 0])
-			z_axis = np.float32([0, 0, 50])
-
-			rvec = convert_to_rvec(-pitch[0, 0, 0], yaw[0, 0, 0], -2*roll[0, 0, 0])
-
-			r_x = np.matmul(x_axis, rvec)
-			r_y = np.matmul(y_axis, rvec)
-			r_z = np.matmul(z_axis, rvec)
-
-			cv2.line(img, center, (int(center[0] + r_x[0]), int(center[1] + r_x[1])), (255, 0, 0), 3)
-			cv2.line(img, center, (int(center[0] + r_y[0]), int(center[1] + r_y[1])), (0, 255, 0), 3)
-			cv2.line(img, center, (int(center[0] + r_z[0]), int(center[1] + r_z[1])), (0, 0, 255), 3)
-
+			cv2.putText(img, display_depth, center, cv2.FONT_HERSHEY_SIMPLEX, .9, (55, 255, 10), 1, cv2.LINE_AA)
 			cv2.putText(img, display_pitch, (topleft[0], botright[1]-60), cv2.FONT_HERSHEY_SIMPLEX, .6, (255, 255, 10), 1, cv2.LINE_AA)
 			cv2.putText(img, display_yaw, (topleft[0], botright[1]-40), cv2.FONT_HERSHEY_SIMPLEX, .6, (255, 20, 255), 1, cv2.LINE_AA)
 			cv2.putText(img, display_roll, (topleft[0], botright[1]-20), cv2.FONT_HERSHEY_SIMPLEX, .6, (30, 255, 255), 1, cv2.LINE_AA)
@@ -167,8 +150,8 @@ def visualize_box(img, rclasses, rscores, rbboxes):
 	return img
 
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-out = cv2.VideoWriter('head_demo.avi', fourcc, 20.0, (640, 480))
-
+out = cv2.VideoWriter('head_demo_depth.avi', fourcc, 20.0, (640, 480))
+# cap = cv2.VideoCapture(0)
 sess = tf.Session()
 my_head_pose_estimator = CnnHeadPoseEstimator(sess)  # Head pose estimation object
 # dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -180,23 +163,32 @@ my_head_pose_estimator.load_pitch_variables(pitchfile_path)
 my_head_pose_estimator.load_yaw_variables(yawfile_path)
 my_head_pose_estimator.load_roll_variables(rollfile_path)
 
+# mdev = freenect.open_device(freenect.init(), 0)
+# freenect.set_depth_mode(mdev, freenect.RESOLUTION_MEDIUM, freenect.DEPTH_REGISTERED)
+# freenect.runloop(dev=mdev)
 
 while True:
-	if not cap.isOpened():
-		print('did not load Cam')
-		pass
-	ret, frame = cap.read()
-	img = frame
-	# img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+	(depth, _), (bgr, _) = get_depth(), get_video()
+
+	d3 = np.dstack((depth, depth, depth)).astype(np.uint8)
+
+
+	img = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 	rclasses, rscores, rbboxes = process_image(img, select_threshold=min_select, nms_threshold=min_conf)
-	img = visualize_box(img, rclasses, rscores, rbboxes)
-	# out.write(img)
+	img = visualize_box(img, rclasses, rscores, rbboxes, d3)
 
+
+
+	print("depth: ", d3[150][150])
+
+
+	img = np.hstack((d3, img))
+	out.write(img)
 	cv2.imshow('demo', img)
 
 	if cv2.waitKey(25) & 0xFF == ord('q'):
 		cv2.destroyAllWindows()
 		break
-cap.release()
-out.release()
+# cap.release()
+# out.release()

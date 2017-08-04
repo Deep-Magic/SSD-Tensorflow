@@ -23,7 +23,14 @@ slim = tf.contrib.slim
 
 VOC_LABELS = {
     'none': (0, 'Background'),
-    'head': (1, 'Vehicle'),
+    'depleted': (1, 'rock'),
+    'bankchest': (2, 'rock'),
+    'depositbox': (3, 'rock'),
+    'amethyst' : (4, 'rock'),
+    'mithril' : (5, 'rock'),
+    'adamantite' : (6, 'rock'),
+    'coal' : (8, 'rock'),
+    'iron' : (9, 'rock'),
 }
 
 
@@ -55,7 +62,7 @@ def get_split(split_name, dataset_dir, file_pattern, reader,
     # Features in Pascal VOC TFRecords.
     keys_to_features = {
         'image/encoded': tf.FixedLenFeature((), tf.string, default_value=''),
-        'image/format': tf.FixedLenFeature((), tf.string, default_value='jpeg'),
+        'image/format': tf.FixedLenFeature((), tf.string, default_value='png'),
         'image/height': tf.FixedLenFeature([1], tf.int64),
         'image/width': tf.FixedLenFeature([1], tf.int64),
         'image/channels': tf.FixedLenFeature([1], tf.int64),
