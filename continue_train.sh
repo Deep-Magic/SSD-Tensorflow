@@ -1,6 +1,6 @@
 DATASET_DIR=/home/walter/Documents/others_git/tfrecords/
 TRAIN_DIR=/home/walter/Documents/others_git/SSD-Tensorflow/logs/
-CHECKPOINT_PATH=/home/walter/Documents/others_git/SSD-Tensorflow/checkpoints/rocks/rock_model.ckpt
+CHECKPOINT_PATH=/home/walter/Documents/others_git/SSD-Tensorflow/logs/model.ckpt-20095
 python train_ssd_network.py \
     --train_dir=${TRAIN_DIR} \
     --dataset_dir=${DATASET_DIR} \
