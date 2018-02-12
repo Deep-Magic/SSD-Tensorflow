@@ -138,6 +138,8 @@ def distort_color(image, color_ordering=0, fast_mode=True, scope=None):
     Raises:
         ValueError: if color_ordering not in [0, 3]
     """
+    return tf.clip_by_value(image, 0.0, 1.0)
+
     with tf.name_scope(scope, 'distort_color', [image]):
         if fast_mode:
             if color_ordering == 0:

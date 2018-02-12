@@ -79,7 +79,7 @@ def _process_image(directory, name):
       width: integer, image width in pixels.
     """
     # Read the image file.
-    filename = directory + DIRECTORY_IMAGES + name + '.jpg'
+    filename = directory + DIRECTORY_IMAGES + name + '.png'
     
     image_data = tf.gfile.FastGFile(filename, 'rb').read()
     
@@ -147,7 +147,7 @@ def _convert_to_example(image_data, labels, labels_text, bboxes, shape,
         [l.append(point) for l, point in zip([ymin, xmin, ymax, xmax], b)]
         # pylint: enable=expression-not-assigned
 
-    image_format = b'JPEG'
+    image_format = b'PNG'
     example = tf.train.Example(features=tf.train.Features(feature={
             'image/height': int64_feature(shape[0]),
             'image/width': int64_feature(shape[1]),

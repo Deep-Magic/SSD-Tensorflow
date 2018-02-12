@@ -1,22 +1,17 @@
-
-# coding: utf-8
-
-# In[2]:
-import time
 import numpy as np
 import tensorflow as tf
 import cv2
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
+
 import argparse
 import sys
 import os
 import math
 import random
-import imutils
 from deepgaze.head_pose_estimation import CnnHeadPoseEstimator
+import freenect
+from freenect import sync_get_depth as get_depth, sync_get_video as get_video
 
-sys.path.append('/home/salil/Documents/SSD-Tensorflow/')
+sys.path.append('../')
 from nets import ssd_vgg_512, ssd_common, np_methods
 from preprocessing import ssd_vgg_preprocessing
 from notebooks import visualization
@@ -27,8 +22,8 @@ slim = tf.contrib.slim
 
 parser = argparse.ArgumentParser(description = 'Get min Confident lvl to display.')
 parser.add_argument('--c', type = float, help='minconfidence needed to display box', default=.2)
-parser.add_argument('--s', type = float, help='min select threshold needed to display box', default=.92)
-parser.add_argument('--a', type = int, help='minmum_area', default=300)
+parser.add_argument('--s', type = float, help='min select threshold needed to display box', default=.96)
+parser.add_argument('--a', type = int, help='minmum_area', default=3000)
 args = parser.parse_args()
 min_conf = args.c
 min_select = args.s
@@ -47,9 +42,9 @@ isess = tf.InteractiveSession(config=config)
 
 
 # ## SSD 300 Model
-# 
+#
 # The SSD 300 network takes 300x300 image inputs. In order to feed any image, the latter is resize to this input shape (i.e.`Resize.WARP_RESIZE`). Note that even though it may change the ratio width / height, the SSD model performs well on resized images (and it is the default behaviour in the original Caffe implementation).
-# 
+#
 # SSD anchors correspond to the default bounding boxes encoded in the network. The SSD net output provides offset on the coordinates and dimensions of these anchors.
 
 # In[7]:
@@ -82,9 +77,9 @@ ssd_anchors = ssd_net.anchors(net_shape)
 
 
 # ## Post-processing pipeline
-# 
+#
 # The SSD outputs need to be post-processed to provide proper detections. Namely, we follow these common steps:
-# 
+#
 # * Select boxes above a classification threshold;
 # * Clip boxes to the image shape;
 # * Apply the Non-Maximum-Selection algorithm: fuse together boxes whose Jaccard score > threshold;
@@ -109,7 +104,7 @@ def process_image(img, select_threshold=0.5, nms_threshold=.45, net_shape=(300, 
 	rbboxes = np_methods.bboxes_resize(rbbox_img, rbboxes)
 	return rclasses, rscores, rbboxes
 
-cap = cv2.VideoCapture(0)
+
 
 def convert_to_rvec(x, y, z):
 	x = np.deg2rad(x)
@@ -125,95 +120,75 @@ def convert_to_rvec(x, y, z):
 	return rvec
 
 
-def visualize_box(img, rclasses, rscores, rbboxes, xr):
+def visualize_box(img, rclasses, rscores, rbboxes, d3):
+	cropped_head = []
+	for ind, box in enumerate(rbboxes):
+		topleft = ( int(box[1]*img.shape[1]), int(box[0]*img.shape[0]))
+		botright = (int(box[3]*img.shape[1]), int(box[2]*img.shape[0]))
+		area = (botright[0]-topleft[0])*(botright[1]-topleft[1])
+		if area > min_area:
+			# cropped_head.append(img[topleft[1]:botright[1], topleft[0]:botright[0]])
+			resized_head = cv2.resize(img[topleft[1]:botright[1], topleft[0]:botright[0]], (64, 64))
+			center = (int((botright[0] + topleft[0]) / 2), int((botright[1] + topleft[1]) / 2))
 
-    cropped_head = []
-    for ind, box in enumerate(rbboxes):
-        topleft = ( int(box[1]*img.shape[1]), int(box[0]*img.shape[0]))
-        botright = (int(box[3]*img.shape[1]), int(box[2]*img.shape[0]))
-        area = (botright[0]-topleft[0])*(botright[1]-topleft[1])
+			cv2.rectangle(img, topleft, botright, (0, 255, 0), 2)
 
-        if area > min_area:
-            cropped_head.append(img[topleft[1]:botright[1], topleft[0]:botright[0]])
-            crop_head = img[topleft[1]:botright[1], topleft[0]:botright[0]]
-            resized_head = cv2.resize(crop_head,(64,64))
-            pitch = my_head_pose_estimator.return_pitch(resized_head)
-            yaw = my_head_pose_estimator.return_yaw(resized_head)
-            roll = my_head_pose_estimator.return_roll(resized_head) 
-            pitch_display = "Pitch: " + str(pitch[0,0,0])
-            yaw_display = "Yaw: " + str(yaw[0,0,0])
-            roll_display = "Roll: " + str(roll[0,0,0])
+			pitch = my_head_pose_estimator.return_pitch(resized_head)  # Evaluate the pitch angle using a CNN
+			yaw = my_head_pose_estimator.return_yaw(resized_head)  # Evaluate the yaw angle using a CNN
+			roll = my_head_pose_estimator.return_roll(resized_head)
 
-            axis = np.float32([[50, 0, 0], [0, 50, 0], [0, 0, 50]])
-            rvec = convert_to_rvec(pitch[0, 0, 0],yaw[0, 0, 0], roll[0, 0, 0])
-            #print(xr)
-            #rvec = convert_to_rvec(xr,0,0) #(pitch,yaw,roll)
-            camera_distortion = np.float32([0.0, 0.0, 0.0, 0.0, 0.0])
-            camera_matrix = np.float32([[602.10618226, 0.0, 320.27333589],
-                                        [0.0, 603.55869786, 229.7537026],
-                                        [0.0, 0.0, 1.0]])
+			display_pitch = "pitch: " + str(pitch[0, 0, 0])
+			display_yaw = "yaw: " + str(yaw[0, 0, 0])
+			display_roll = "roll: " + str(roll[0, 0, 0])
+			display_depth = "depth: " + str(d3[center[1]][center[0]][0])
 
-            tvec = np.float32([0,0,0])
-            x_axis = np.float32([50, 0, 0])
-            y_axis = np.float32([0, -50, 0])
-            z_axis = np.float32([0, 0, -50])
-            xpoints = np.matmul(x_axis, rvec)
-            ypoints = np.matmul(y_axis, rvec)
-            zpoints = np.matmul(z_axis, rvec)
-   
-            # imgpts, jac = cv2.projectPoints(axis, rvec, tvec, camera_matrix, camera_distortion)
-            
-
-
-            img = cv2.rectangle(img, topleft, botright, (0, 255, 0), 2)
-	    # print(rscores[ind])
-            img = cv2.putText(img, pitch_display, (topleft[0],botright[1]+20),cv2.FONT_HERSHEY_SIMPLEX, 0.6,(0,0,255),1,cv2.LINE_AA )
-            img = cv2.putText(img, yaw_display, (topleft[0],botright[1]+40),cv2.FONT_HERSHEY_SIMPLEX, 0.6,(0,0,255),1,cv2.LINE_AA )
-            img = cv2.putText(img, roll_display, (topleft[0],botright[1]+60),cv2.FONT_HERSHEY_SIMPLEX, 0.6,(0,0,255),1,cv2.LINE_AA )
-            img = cv2.putText(img,str(rscores[ind]),topleft, cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),2,cv2.LINE_AA)
-
-
-            topleft = (topleft[0]+0, topleft[1]+0)
-
-            cv2.line(img, topleft, (int(xpoints[0]+topleft[0]), int(xpoints[1]+topleft[1])), (255,127,39), 3)
-            cv2.line(img, topleft, (int(ypoints[0]+topleft[0]), int(ypoints[1]+topleft[1])), (0, 255, 0), 3)
-            cv2.line(img, topleft, (int(zpoints[0]+topleft[0]), int(zpoints[1]+topleft[1])), (0, 0, 255), 3)
-
-
-    return img, cropped_head
+			cv2.putText(img, display_depth, center, cv2.FONT_HERSHEY_SIMPLEX, .9, (55, 255, 10), 1, cv2.LINE_AA)
+			cv2.putText(img, display_pitch, (topleft[0], botright[1]-60), cv2.FONT_HERSHEY_SIMPLEX, .6, (255, 255, 10), 1, cv2.LINE_AA)
+			cv2.putText(img, display_yaw, (topleft[0], botright[1]-40), cv2.FONT_HERSHEY_SIMPLEX, .6, (255, 20, 255), 1, cv2.LINE_AA)
+			cv2.putText(img, display_roll, (topleft[0], botright[1]-20), cv2.FONT_HERSHEY_SIMPLEX, .6, (30, 255, 255), 1, cv2.LINE_AA)
+			cv2.putText(img, str(rscores[ind]),topleft, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2, cv2.LINE_AA)
+	return img
 
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-out = cv2.VideoWriter('head_demo.avi', fourcc, 12.0, (640, 480))
-
+out = cv2.VideoWriter('head_demo_depth.avi', fourcc, 20.0, (640, 480))
+# cap = cv2.VideoCapture(0)
 sess = tf.Session()
 my_head_pose_estimator = CnnHeadPoseEstimator(sess)  # Head pose estimation object
 # dir_path = os.path.dirname(os.path.realpath(__file__))
-pitchfile_path = "/home/salil/Documents/deepgaze/etc/tensorflow/head_pose/pitch/cnn_cccdd_30k.tf"
-yawfile_path = "/home/salil/Documents/deepgaze/etc/tensorflow/head_pose/yaw/cnn_cccdd_30k.tf"
-rollfile_path = ("/home/salil/Documents/deepgaze/etc/tensorflow/head_pose/roll/cnn_cccdd_30k.tf") 
+pitchfile_path = "/home/walter/Documents/others_git/deepgaze/etc/tensorflow/head_pose/pitch/cnn_cccdd_30k.tf"
+yawfile_path = "/home/walter/Documents/others_git/deepgaze/etc/tensorflow/head_pose/yaw/cnn_cccdd_30k"
+rollfile_path = "/home/walter/Documents/others_git/deepgaze/etc/tensorflow/head_pose/roll/cnn_cccdd_30k.tf"
+
 my_head_pose_estimator.load_pitch_variables(pitchfile_path)
 my_head_pose_estimator.load_yaw_variables(yawfile_path)
 my_head_pose_estimator.load_roll_variables(rollfile_path)
 
-count = 0
-x_axis_rotate = 0
-while True:
-	if not cap.isOpened():
-		print('did not load Cam')
-		pass
-	ret, frame = cap.read()
-	img = imutils.rotate(frame,90)
-	
-	rclasses, rscores, rbboxes = process_image(img, select_threshold=min_select, nms_threshold=min_conf)
-	img, cropped_head_list = visualize_box(img, rclasses, rscores, rbboxes, x_axis_rotate)
-	#out.write(img)
+# mdev = freenect.open_device(freenect.init(), 0)
+# freenect.set_depth_mode(mdev, freenect.RESOLUTION_MEDIUM, freenect.DEPTH_REGISTERED)
+# freenect.runloop(dev=mdev)
 
+while True:
+	(depth, _), (bgr, _) = get_depth(), get_video()
+
+	d3 = np.dstack((depth, depth, depth)).astype(np.uint8)
+
+
+	img = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+	rclasses, rscores, rbboxes = process_image(img, select_threshold=min_select, nms_threshold=min_conf)
+	img = visualize_box(img, rclasses, rscores, rbboxes, d3)
+
+
+
+	print("depth: ", d3[150][150])
+
+
+	img = np.hstack((d3, img))
+	out.write(img)
 	cv2.imshow('demo', img)
-	# yaw = my_head_pose_estimator.return_yaw(resized_head)  # Evaluate the yaw angle using a CNN
-	# print("Estimated pitch ..... " + str(pitch[0, 0, 0]))
-	#print("Estimated yaw ..... " + str(yaw[0, 0, 0]))
+
 	if cv2.waitKey(25) & 0xFF == ord('q'):
 		cv2.destroyAllWindows()
 		break
-cap.release()
-out.release()
+# cap.release()
+# out.release()
